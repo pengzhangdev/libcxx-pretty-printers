@@ -17,6 +17,8 @@
 
 import re
 import gdb
+import sys
+import traceback
 
 # Try to use the new-style pretty-printing if available.
 _use_gdb_pp = True
@@ -33,6 +35,27 @@ try:
         _use_type_printing = True
 except ImportError:
     pass
+
+# Python 2 + Python 3 compatibility code
+if sys.version_info[0] > 2:
+    ### Python 3 stuff
+    Iterator = object
+
+else:
+    ### Python 2 stuff
+    class Iterator:
+        """Compatibility mixin for iterators
+
+        Instead of writing next() methods for iterators, write
+        __next__() methods and use this mixin to make them work in
+        Python 2 as well as Python 3.
+
+        Idea stolen from the "six" documentation:
+        <http://pythonhosted.org/six/#six.Iterator>
+        """
+
+        def next(self):
+            return self.__next__()
 
 # Starting with the type ORIG, search for the member type NAME.  This
 # handles searching upward through superclasses.  This is needed to
@@ -132,7 +155,7 @@ class StdPairPrinter:
 class StdTuplePrinter:
     "Print a std::tuple"
 
-    class _iterator:
+    class _iterator(Iterator):
         def __init__(self, head):
             self.head = head['base_']
             self.fields = self.head.type.fields()
@@ -166,7 +189,7 @@ class StdTuplePrinter:
 class StdListPrinter:
     "Print a std::list"
 
-    class _iterator:
+    class _iterator(Iterator):
         def __init__(self, nodetype, head):
             self.nodetype = nodetype
             self.base = head['__next_']
@@ -215,7 +238,7 @@ class StdListIteratorPrinter:
 class StdForwardListPrinter:
     "Print a std::forward_list"
 
-    class _iterator:
+    class _iterator(Iterator):
         def __init__(self, head):
             self.node = head
             self.count = 0
@@ -248,7 +271,7 @@ class StdForwardListPrinter:
 class StdVectorPrinter:
     "Print a std::vector"
 
-    class _iterator:
+    class _iterator(Iterator):
         def __init__(self, start, finish_or_size, bits_per_word, bitvec):
             self.bitvec = bitvec
             if bitvec:
@@ -319,6 +342,7 @@ class StdVectorPrinter:
         else:
             finish = self.val['__end_']
             end = self.val['__end_cap_']['__value_']
+
             length = finish - start
             capacity = end - start
             if length == 0:
@@ -354,7 +378,7 @@ class StdVectorBoolIteratorPrinter:
 class StdDequePrinter:
     "Print a std::deque"
 
-    class _iterator:
+    class _iterator(Iterator):
         def __init__(self, size, block_size, start, map_begin, map_end):
             self.block_size = block_size
             self.count = 0
@@ -467,7 +491,7 @@ class StdSetPrinter:
     "Print a std::set or std::multiset"
 
     # Turn an RbtreeIterator into a pretty-print iterator.
-    class _iterator:
+    class _iterator(Iterator):
         def __init__(self, rbiter):
             self.rbiter = rbiter
             self.count = 0
@@ -552,7 +576,7 @@ class StdMapPrinter:
     "Print a std::map or std::multimap"
 
     # Turn an RbtreeIterator into a pretty-print iterator.
-    class _iterator:
+    class _iterator(Iterator):
         def __init__(self, rbiter):
             self.rbiter = rbiter
             self.count = 0
@@ -767,7 +791,16 @@ class Printer(object):
 
         basename = match.group(1)
         if basename in self.lookup:
-            return self.lookup[basename].invoke(val)
+            try:
+                obj = self.lookup[basename].invoke(val)
+                if hasattr(obj, 'to_string'):
+                    _ = obj.to_string()
+                if hasattr(obj, 'children'):
+                    _ = obj.children()
+                return obj
+            except Exception as e:
+                # Failed to invoke the pretty printer
+                return None
 
         # Cannot find a pretty printer.  Return None.
         return None
